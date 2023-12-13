@@ -48,6 +48,15 @@ async def on_message(message: discord.Message):
         await message.channel.send("GOTEEM!")
 
 @client.event
+async def on_guild_channel_delete(channel: discord.GroupChannel):
+    i = 0
+    while i < len(managedMessages):
+        if managedMessages[i][1].id == channel.id:
+            managedMessages.pop(i)
+            return
+        i += 1
+
+@client.event
 async def on_raw_reaction_add(event: discord.RawReactionActionEvent):
     if event.user_id == client.user.id:
         return
