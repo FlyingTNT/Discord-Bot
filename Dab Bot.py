@@ -65,7 +65,15 @@ async def on_raw_reaction_add(event: discord.RawReactionActionEvent):
         return
     for message, channel in managedMessages:
         if event.message_id == message.id:
-            await channel.set_permissions(target = event.member, overwrite=discord.PermissionOverwrite(read_messages = True))
+            try:
+                await channel.set_permissions(target = event.member, overwrite=discord.PermissionOverwrite(read_messages = True))
+            except discord.HTTPException as e:
+                if e.status == 403:
+                    await message.reply("I don't have permission to edit channel permissions!", mention_author=False)
+                    return
+                else:
+                    await message.reply(f"Unknown error editing permissions: {int(e.status)}!", mention_author=False)
+                    return
             return
 
 @client.event
@@ -77,7 +85,15 @@ async def on_raw_reaction_remove(event: discord.RawReactionActionEvent):
         return
     for message, channel in managedMessages:
         if event.message_id == message.id:
-            await channel.set_permissions(target = await channel.guild.fetch_member(event.user_id), overwrite=None)
+            try:
+                await channel.set_permissions(target = await channel.guild.fetch_member(event.user_id), overwrite=None)
+            except discord.HTTPException as e:
+                if e.status == 403:
+                    await message.reply("I don't have permission to edit channel permissions!", mention_author=False)
+                    return
+                else:
+                    await message.reply(f"Unknown error editing permissions: {int(e.status)}!", mention_author=False)
+                    return
             return
 
 async def getManagedMessage(channel: discord.TextChannel) -> discord.Message | None:
@@ -93,7 +109,15 @@ async def getManagedMessage(channel: discord.TextChannel) -> discord.Message | N
 async def updateChannelPerms(channel: discord.TextChannel, message: discord.Message):
     async for member in channel.guild.fetch_members():
         if not (member.id == client.user.id):
-            await channel.set_permissions(member, overwrite=None)
+            try:
+                await channel.set_permissions(member, overwrite=None)
+            except discord.HTTPException as e:
+                if e.status == 403:
+                    await channel.send("I don't have permission to edit channel permissions!")
+                    return
+                else:
+                    await channel.send(f"Unknown error editing permissions: {int(e.status)}!")
+                    return
     
     for reaction in message.reactions:
         if str(reaction.emoji) == "👺":
@@ -101,7 +125,15 @@ async def updateChannelPerms(channel: discord.TextChannel, message: discord.Mess
             for user in users:
                 if user.id == client.user.id:
                     continue
-                await channel.set_permissions(user, overwrite = discord.PermissionOverwrite(read_messages = True))
+                try:
+                    await channel.set_permissions(user, overwrite = discord.PermissionOverwrite(read_messages = True))
+                except discord.HTTPException as e:
+                    if e.status == 403:
+                        await channel.send("I don't have permission to edit channel permissions!")
+                        return
+                    else:
+                        await channel.send(f"Unknown error editing permissions: {int(e.status)}!")
+                        return
 
 async def init():
     async for guild in client.fetch_guilds():
@@ -136,15 +168,23 @@ async def plan(interaction: discord.Interaction, name: str, date: str):
     try:
         day = datetime.date.fromisoformat(date)
     except ValueError:
-        interaction.edit_original_response("Error: Invalid date!")
+        await interaction.edit_original_response("Error: Invalid date!")
         return
     
     message = await interaction.channel.send(f"React with 👺 to get access to the channel for {name}")
     await message.add_reaction("👺")
 
-    channel = await makeScheduledEventChannel(name, day, interaction.guild, message)
-    managedMessages.append((message, channel))
-    await interaction.edit_original_response(content="Done!")
+    try:
+        channel = await makeScheduledEventChannel(name, day, interaction.guild, message)
+        managedMessages.append((message, channel))
+        await interaction.edit_original_response(content="Done!")
+    except discord.HTTPException as e:
+        if e.status == 403:
+            await interaction.edit_original_response(content="I don't have permission to make channels!")
+            return
+        else:
+            await interaction.edit_original_response(content="Unknown error making channel (" + str(e.status) + ")!")
+            return
 
 
 @tree.command(name = "birthday", description = "Checks whether the birthday roles need to be updated.", guilds = GUILDS)
