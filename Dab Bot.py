@@ -3,8 +3,11 @@ from discord import app_commands
 import json
 import datetime
 import pytz
+import re
 
 data = json.load(open("Store.json", 'r'))
+
+managedMessages: list[tuple[discord.Message, discord.TextChannel]] = []
 
 DELILAH_ID = data["DELILAH_ID"]
 MY_ID = data["MY_ID"]
@@ -14,6 +17,9 @@ GUILDS = [discord.Object(guildID) for guildID in data["GUILD_IDS"]]
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
+intents.guilds = True
+intents.guild_reactions = True
+intents.message_content = True
 
 client = discord.Client(intents=intents)
 #bot = commands.Bot(command_prefix='!', intents=intents)
@@ -26,9 +32,11 @@ async def on_ready():
         print(guild1)
         await tree.sync(guild=guild1)
     print(f'We have logged in as {client.user}')
+    await init()
+    print("Setup done")
 
 @client.event
-async def on_message(message):
+async def on_message(message: discord.Message):
     if message.author == client.user:
         return
 
@@ -39,8 +47,99 @@ async def on_message(message):
         await message.channel.send("HA!")
         await message.channel.send("GOTEEM!")
 
+@client.event
+async def on_raw_reaction_add(event: discord.RawReactionActionEvent):
+    if event.user_id == client.user.id:
+        return
+    if not (str(event.emoji) == "👺"):
+        #print("Wrong emoji")
+        return
+    for message, channel in managedMessages:
+        if event.message_id == message.id:
+            await channel.set_permissions(target = event.member, overwrite=discord.PermissionOverwrite(read_messages = True))
+            return
+
+@client.event
+async def on_raw_reaction_remove(event: discord.RawReactionActionEvent):
+    if event.user_id == client.user.id:
+        return
+    if not (str(event.emoji) == "👺"):
+        #print("Wrong emoji")
+        return
+    for message, channel in managedMessages:
+        if event.message_id == message.id:
+            await channel.set_permissions(target = await channel.guild.fetch_member(event.user_id), overwrite=None)
+            return
+
+async def getManagedMessage(channel: discord.TextChannel) -> discord.Message | None:
+    text = channel.topic
+    if text is None:
+        return
+    messageId: list[str] = re.findall(pattern = "Linked message: https://discord.com/channels/\\d+/\\d+/\\d+", string = text)
+    #print(messageId, text)
+    if len(messageId) > 0:
+        #print(messageId[0].split("/"))
+        return await (await channel.guild.fetch_channel(int(messageId[0].split("/")[-2]))).fetch_message(int(messageId[0].split("/")[-1]))
+    
+async def updateChannelPerms(channel: discord.TextChannel, message: discord.Message):
+    async for member in channel.guild.fetch_members():
+        if not (member.id == client.user.id):
+            await channel.set_permissions(member, overwrite=None)
+    
+    for reaction in message.reactions:
+        if str(reaction.emoji) == "👺":
+            users = [user async for user in reaction.users()]
+            for user in users:
+                if user.id == client.user.id:
+                    continue
+                await channel.set_permissions(user, overwrite = discord.PermissionOverwrite(read_messages = True))
+
+async def init():
+    async for guild in client.fetch_guilds():
+        for channel in (await guild.fetch_channels()):
+            if isinstance(channel, discord.TextChannel):
+                managedMessage = await getManagedMessage(channel)
+                if managedMessage is None:
+                    continue
+                managedMessages.append((managedMessage, channel))
+                await updateChannelPerms(channel, managedMessage)
+
+async def makeScheduledEventChannel(name: str, day: datetime.date, guild: discord.Guild, message: discord.Message):
+    channels = await guild.fetch_channels()
+    plans = None
+    for channel in channels:
+        if isinstance(channel, discord.CategoryChannel) and channel.name.lower() == "plans":
+            plans = channel
+            break
+    
+    if plans is None:
+        plans = await guild.create_category_channel("plans", overwrites={guild.default_role: discord.PermissionOverwrite(read_messages = False), guild.me: discord.PermissionOverwrite(read_messages=True, manage_channels=True)},reason=None, position=0)
+
+    return await guild.create_text_channel(name = name, reason = "Making scheduled event", category=plans, news=False, overwrites={guild.default_role: discord.PermissionOverwrite(read_messages=False), guild.me: discord.PermissionOverwrite(read_messages=True, manage_channels=True)},
+                                           position = len(plans.text_channels), topic=f"Managed by {guild.me.mention}\nPlan channel for {name} on {day}.\nLinked message: {message.jump_url}",
+                                           slowmode_delay=0, nsfw=False)
+
+@tree.command(name = "plan", description = "Makes a plan channel whose permissions are linked to a message's reactions.", guilds = GUILDS)
+@app_commands.describe(name="The name of the event", date = "The date of the event")
+async def plan(interaction: discord.Interaction, name: str, date: str):
+    day = None
+    await interaction.response.send_message("Working...")
+    try:
+        day = datetime.date.fromisoformat(date)
+    except ValueError:
+        interaction.edit_original_response("Error: Invalid date!")
+        return
+    
+    message = await interaction.channel.send(f"React with 👺 to get access to the channel for {name}")
+    await message.add_reaction("👺")
+
+    channel = await makeScheduledEventChannel(name, day, interaction.guild, message)
+    managedMessages.append((message, channel))
+    await interaction.edit_original_response(content="Done!")
+
+
 @tree.command(name = "birthday", description = "Checks whether the birthday roles need to be updated.", guilds = GUILDS)
-async def birthday(interaction):
+async def birthday(interaction: discord.Interaction):
     await interaction.response.send_message("Working...")
     birthdayRole = None
     for role in interaction.guild.roles:
@@ -84,7 +183,7 @@ async def birthday(interaction):
 
 
 @tree.command(name="createbirthdayevents", guilds = GUILDS)
-async def createBirthdayEvents(interaction):
+async def createBirthdayEvents(interaction: discord.Interaction):
     birthdays = json.load(open("Birthdays.json", 'r'))
     birthdaysByUserID = {}
     for person in birthdays:
