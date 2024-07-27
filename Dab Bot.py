@@ -250,7 +250,7 @@ async def createBirthdayEvents(interaction: discord.Interaction):
         print("Checking " + person["Name"])
         hasEvent = False
         for event in events:
-            if event.name == person["Name"] + "'s Birthday":
+            if (person["Name"].lower() in event.name.lower()) and ("birthday" in event.name.lower()):
                 print(person["Name"] + " already has an event: " + str(event))
                 hasEvent = True
                 break
